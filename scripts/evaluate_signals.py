@@ -82,16 +82,30 @@ SAMPLES = [
         "next eighteen months. No structural deficiencies were observed "
         "during this cycle.",
     ),
+    (
+        "borderline_edited_ai",
+        "ai (lightly human-edited)",
+        "I've been thinking a lot about remote work lately. There are "
+        "genuine tradeoffs — flexibility and no commute on one side, "
+        "isolation and blurred work-life boundaries on the other. Studies "
+        "show productivity varies widely by individual and role type.",
+    ),
 ]
 
 
 def main():
-    print(f"{'sample':<26}{'expected':<28}{'ai_score':>9}{'confidence':>12}  verdict")
+    print(
+        f"{'sample':<26}{'expected':<28}{'llm':>6}{'stylo':>7}"
+        f"{'ai_score':>10}{'confidence':>12}  verdict"
+    )
     print("-" * 100)
     for name, expected, text in SAMPLES:
         result = classify(text)
         print(
-            f"{name:<26}{expected:<28}{result['ai_score']:>9.3f}"
+            f"{name:<26}{expected:<28}"
+            f"{result['signals']['llm']['score']:>6.2f}"
+            f"{result['signals']['stylometric']['score']:>7.2f}"
+            f"{result['ai_score']:>10.3f}"
             f"{result['confidence']:>12.3f}  {result['verdict']}"
         )
 

@@ -99,28 +99,44 @@ platform:
 - otherwise → `uncertain`
 
 **How this was tested.** `scripts/evaluate_signals.py` runs known-origin
-samples through the full pipeline and checks the score moves in the
-expected direction. Actual output:
+samples — including two deliberately different *kinds* of borderline case
+— through the full pipeline and prints each signal's score separately
+alongside the combined result, so disagreement between signals is visible
+instead of hidden inside the average. Actual output:
 
 ```
-sample                    expected                     ai_score  confidence  verdict
+sample                    expected                       llm  stylo  ai_score  confidence  verdict
 ----------------------------------------------------------------------------------------------------
-human_moby_dick           human                           0.119       0.762  likely_human
-human_diary               human                           0.193       0.613  likely_human
-ai_product_copy           ai                              0.783       0.566  likely_ai
-ai_motivational           ai                              0.668       0.337  uncertain
-borderline_formal_human   human (formal/technical style)    0.779       0.558  likely_ai
+human_moby_dick           human                         0.00   0.30     0.119       0.762  likely_human
+human_diary               human                         0.10   0.33     0.193       0.613  likely_human
+ai_product_copy           ai                            0.90   0.61     0.783       0.566  likely_ai
+ai_motivational           ai                            0.80   0.47     0.668       0.337  uncertain
+borderline_formal_human   human (formal/technical style)  0.80   0.75     0.779       0.558  likely_ai
+borderline_edited_ai      ai (lightly human-edited)     0.20   0.50     0.321       0.358  likely_human
 ```
 
-Three of five land where expected with meaningful confidence. The fifth
-row — `borderline_formal_human`, an actual human-written technical
-inspection report — is not a bug, it's the false-positive scenario this
-project is designed around: a flat, formal, uniform writing style trips
-both signals even though it's human. That's exactly why this landed above
-0.75 instead of being clamped to "uncertain" by design — the thresholds
-reduce false positives, they don't eliminate them — and why the appeals
-workflow exists as the real safety net. See the "Real false-positive
-observed" entry in the audit log sample below.
+Four of six land where expected with meaningful confidence, and the other
+two are the exact edge cases this design anticipates (planning.md §5), not
+scoring bugs:
+
+- `borderline_formal_human` — an actual human-written technical inspection
+  report — trips **both** signals (LLM reads clean formal prose as AI-like;
+  stylometrics reads its uniform sentence length the same way) and lands
+  above the 0.75 `likely_ai` bar. This is the false-positive scenario the
+  asymmetric thresholds and appeals workflow exist for; they reduce this
+  failure mode, they don't eliminate it.
+- `borderline_edited_ai` — AI-drafted text that's been lightly rewritten
+  in a more personal voice — pulls the LLM score down to 0.20 and the
+  stylometric score to a neutral 0.50, landing at `likely_human`. This
+  confirms planning.md §5 Edge Case 3: signals that only inspect the
+  finished artifact can't see draft provenance, so sufficiently-edited AI
+  text reads as human by design, not by malfunction.
+
+Where the two signals disagree most (`ai_motivational`: llm=0.80 vs
+stylo=0.47) is informative on its own — the LLM is confident from meaning
+alone, while the structural signal is unconvinced, which is exactly the
+kind of independent-failure behavior the two-signal design is meant to
+surface rather than paper over with a single opaque score.
 
 ## Transparency Label
 
