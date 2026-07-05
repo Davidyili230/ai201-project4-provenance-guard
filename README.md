@@ -34,7 +34,7 @@ python -m scripts.evaluate_signals
 | Endpoint | Method | Body | Returns |
 |---|---|---|---|
 | `/submit` | POST | `{ "content": str, "creator_id": str? }` | classification result (below) |
-| `/appeal` | POST | `{ "content_id": str, "reasoning": str }` | `{ appeal_id, content_id, status: "under_review" }` |
+| `/appeal` | POST | `{ "content_id": str, "reasoning": str }` (`creator_reasoning` also accepted as an alias) | `{ appeal_id, content_id, status: "under_review" }` |
 | `/content/<id>` | GET | — | full submission record + appeal history |
 | `/log` | GET | `?limit=N` | audit log, newest first |
 | `/health` | GET | — | liveness check |
@@ -180,8 +180,30 @@ Implemented with Flask-Limiter, keyed by remote address:
 | `POST /submit` | 5/minute, 50/day | A real creator submits a handful of pieces a day at most — 50/day covers even a prolific poster with room to spare. The 5/minute cap targets a different threat: an adversary iteratively tweaking a single AI-generated piece and resubmitting to probe/reverse-engineer the classifier's thresholds. Slowing that loop to 5 tries/minute makes probing impractical without blocking legitimate one-off submissions. |
 | `POST /appeal` | 5/hour | Appeals are rare, deliberate actions (a creator disputing one decision), not a high-frequency flow. 5/hour is generous for a genuine dispute but prevents appeal-spam from burying human reviewers or gaming the "under review" status across many pieces at once. |
 
-Exceeding a limit returns `429`. Verified: 6 rapid `/submit` calls from the
-same client return `201, 201, 201, 201, 201, 429`.
+Exceeding a limit returns `429`. Storage backend is `memory://`
+(`storage_uri="memory://"` on the `Limiter`) — sufficient for a
+single-process local deployment; a multi-worker production deployment
+would need a shared backend (Redis) so limits are enforced across
+workers.
+
+Verified with 12 rapid `/submit` calls from the same client (script from
+the milestone spec, `for i in $(seq 1 12); do curl ... ; done`) — the
+first 5 succeed, the remaining 7 are rejected:
+
+```
+201
+201
+201
+201
+201
+429
+429
+429
+429
+429
+429
+429
+```
 
 ## Audit Log
 

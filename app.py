@@ -13,7 +13,12 @@ from config import APPEAL_RATE_LIMITS, MAX_CONTENT_LENGTH, MIN_CONTENT_LENGTH, S
 from detection.scoring import classify
 
 app = Flask(__name__)
-limiter = Limiter(key_func=get_remote_address, app=app, default_limits=[])
+limiter = Limiter(
+    key_func=get_remote_address,
+    app=app,
+    default_limits=[],
+    storage_uri="memory://",
+)
 
 storage.init_db()
 
@@ -65,7 +70,7 @@ def submit():
 def appeal():
     payload = request.get_json(silent=True) or {}
     content_id = payload.get("content_id")
-    reasoning = (payload.get("reasoning") or "").strip()
+    reasoning = (payload.get("reasoning") or payload.get("creator_reasoning") or "").strip()
 
     if not content_id:
         return jsonify({"error": "content_id is required"}), 400
