@@ -27,7 +27,7 @@ def health():
 @limiter.limit(";".join(SUBMIT_RATE_LIMITS))
 def submit():
     payload = request.get_json(silent=True) or {}
-    content = (payload.get("content") or "").strip()
+    content = (payload.get("content") or payload.get("text") or "").strip()
     creator_id = payload.get("creator_id")
 
     if len(content) < MIN_CONTENT_LENGTH:
