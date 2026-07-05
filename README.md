@@ -11,6 +11,38 @@ signal rationale, false-positive walkthrough, and diagrams. This README
 documents the required evidence: label text, signal design, confidence
 testing, rate limits, and audit log samples.
 
+## Architecture Overview
+
+The path a submission takes from input to transparency label:
+
+1. **`POST /submit`** hits the Flask API layer (`app.py`). Flask-Limiter
+   checks the rate limit first — if exceeded, the request is rejected
+   with `429` before any detection work runs.
+2. The raw text is validated for length, then handed to
+   **two independent detection signals**: an LLM holistic judgment
+   (`detection/llm_signal.py`, Groq `llama-3.3-70b-versatile`) and a
+   stylometric heuristic (`detection/stylometric.py`, pure Python). Each
+   returns its own `[0, 1]` AI-likelihood score plus an auditable feature
+   breakdown (rationale text / raw stats).
+3. `detection/scoring.py` combines the two scores into one `ai_score`
+   with fixed weights, derives a `confidence` (distance from the
+   maximally-uncertain midpoint), and buckets the result into one of
+   three verdicts via asymmetric thresholds.
+4. `detection/labels.py` renders the verdict + confidence into one of
+   three fixed transparency-label templates — this is the only text a
+   reader ever sees, never the raw score.
+5. The full decision (text, both signals' raw output, `ai_score`,
+   `confidence`, `verdict`, `label`) is written to SQLite
+   (`storage.py`): a `submissions` row plus an append-only `audit_log`
+   entry, before the response returns.
+6. If a creator disputes the verdict, `POST /appeal` links their
+   `reasoning` to the original `content_id`, flips `status` from
+   `classified` to `under_review`, and logs the dispute — no automatic
+   re-scoring; a human reviewer picks it up via `GET /content/<id>`.
+
+Full diagrams (submission flow + appeal flow) and the file-by-file
+architectural narrative are in [planning.md](planning.md#architecture).
+
 ## Setup
 
 ```bash
@@ -137,6 +169,25 @@ stylo=0.47) is informative on its own — the LLM is confident from meaning
 alone, while the structural signal is unconvinced, which is exactly the
 kind of independent-failure behavior the two-signal design is meant to
 surface rather than paper over with a single opaque score.
+
+**A concrete high-confidence vs. low-confidence pair, from the table
+above:**
+
+- **High confidence** — `human_moby_dick`: `ai_score = 0.119`,
+  **`confidence = 0.762`** → `likely_human`. Both signals independently
+  land far from the midpoint (llm=0.00, stylo=0.30), so they reinforce
+  each other and the combined score sits close to the extreme.
+- **Lower confidence** — `ai_motivational`: `ai_score = 0.668`,
+  **`confidence = 0.337`** → `uncertain`. The LLM signal alone
+  (`llm=0.80`) would suggest AI, but the stylometric signal pulls it back
+  toward the midpoint (`stylo=0.47`), so the combined score sits closer
+  to 0.5 and confidence drops sharply even though the verdict still
+  leans AI. This is the scoring formula doing exactly what it's meant to
+  do: signal *disagreement* shows up as low confidence, not as a
+  confidently wrong answer.
+
+This ~2.3x spread (0.762 vs 0.337) on real inputs is what shows the score
+produces meaningful variation rather than clustering near a constant.
 
 ## Transparency Label
 
@@ -275,6 +326,110 @@ local run — 2 submissions, then a 3rd submission that was appealed):
 running the three sample requests above — the `details` field is not
 truncated in the live response; it's abbreviated above only for
 README readability.)
+
+## Known Limitations
+
+**Short-form, repetition-heavy creative text (haiku, refrains, slogans,
+under ~40 words) is the case this system would most likely get wrong.**
+`detection/stylometric.py` computes a `low_sample_warning` flag when
+`word_count < 40`, because coefficient-of-variation and type-token-ratio
+are statistically meaningless on that little text — but
+`detection/scoring.py` never reads that flag. It's computed and returned
+in the feature breakdown for auditability, but it doesn't lower
+confidence or nudge the verdict toward `uncertain`. A short poem that
+deliberately repeats a refrain (a legitimate artistic device) produces
+the exact same low-variance, low-diversity signature the stylometric
+heuristic associates with generic AI text, and nothing downstream
+compensates for the sample being too small to trust. This is a specific,
+reproducible gap tied to a real property of Signal 2 — not a "needs more
+data" hand-wave — and it's the first thing listed under Stretch Features
+below because the fix (gate on the existing flag) is already scoped.
+
+Two related, lower-severity gaps (full detail in
+[planning.md §5](planning.md)):
+
+- **Formal/technical human writing** trips both signals toward `likely_ai`
+  (reproduced in testing as `borderline_formal_human`, `ai_score = 0.779`)
+  because uniform sentence structure and precise vocabulary look
+  identical to AI fluency to both an LLM judge and a variance-based
+  heuristic. The asymmetric thresholds narrow this failure mode but
+  don't close it.
+- **Heavily edited AI drafts** read as human, because both signals only
+  inspect the finished text — there is no mechanism to detect drafting
+  history, so a human rewrite pass erases the surface markers either
+  signal relies on.
+
+## Spec Reflection
+
+**Where the spec helped:** the requirement that each detection signal
+output a continuous `[0, 1]` AI-likelihood score — never a binary
+flag — directly shaped the architecture. Because both signals had to
+speak the same normalized language, they could be combined with a simple
+weighted average instead of some ad hoc voting scheme, and confidence
+could be derived mathematically (`|ai_score - 0.5| * 2`) instead of
+being a third thing each signal had to separately estimate. Designing to
+that constraint from the start is also what made the two signals
+*independently auditable* — you can always see `llm_score` and
+`stylo_score` disagreeing before they're averaged away, which is exactly
+what surfaces cases like `ai_motivational` above.
+
+**Where the implementation diverged:** the appeals workflow (`POST
+/appeal`) does not verify that the appellant is the original
+`creator_id` — it accepts an appeal from anyone who holds a valid
+`content_id`. This is a real gap relative to a production-grade appeals
+process, but it was a deliberate scope cut, not an oversight: no part of
+this project has an authentication layer (there are no user accounts,
+sessions, or credentials anywhere in `app.py`), so "verifying" the
+appellant would have meant either trusting a client-supplied
+`creator_id` string with no way to prove it (a false sense of security)
+or building an entire auth system just to gate one endpoint, which was
+out of scope for what this milestone set was asking the system to prove.
+It's listed explicitly as the first item under Appellant Authentication
+in planning.md §7 rather than silently left out.
+
+## AI Usage
+
+Two specific instances of directing an AI coding assistant during
+implementation (see [planning.md's "AI Tool Plan"](planning.md) for the
+full per-milestone breakdown of what was handed to the assistant and how
+output was checked before being trusted):
+
+1. **Building the second signal + combiner (Milestone 4).** I gave the
+   assistant the stylometric spec section (sentence-length coefficient of
+   variation, type-token ratio, punctuation density) and the exact
+   weight/threshold values to implement `detection/stylometric.py` and
+   `detection/scoring.py`. It produced working normalization clamps for
+   each sub-feature (e.g. `cv_score = clamp(1 - cv / 0.7)`) on the first
+   pass. What I overrode: I didn't accept the combiner as done just
+   because it ran — I required it to pass through
+   `scripts/evaluate_signals.py` against samples of *known* origin,
+   including the two borderline cases, before trusting it. That test run
+   is what surfaced that a naive single 0.5 cutoff would have
+   misclassified the real human-written technical report
+   (`borderline_formal_human`, `ai_score = 0.779`) as `likely_ai` with no
+   room for doubt — which is what drove the decision to widen the
+   `uncertain` band asymmetrically (0.35–0.75) rather than use a single
+   midpoint threshold, on top of whatever the assistant initially
+   generated.
+2. **Wiring `low_sample_warning` (Milestone 4/5 boundary).** The
+   assistant's stylometric implementation computes and returns a
+   `low_sample_warning` flag for texts under ~40 words as part of the
+   feature breakdown. When integrating it into `detection/scoring.py`, I
+   deliberately did **not** have it automatically fold that flag into the
+   confidence calculation or verdict — I kept the scoring formula
+   restricted to exactly the combination described in the spec's
+   confidence-scoring section, and left the warning as an unused,
+   returned-but-not-acted-on field. That's a case of overriding the more
+   "helpful" instinct (silently patching a known edge case into the
+   score) in favor of keeping the implementation legible and matching
+   what was specified, and instead recording the gap explicitly as a
+   scoped stretch feature (planning.md §7) rather than quietly baking in
+   an undocumented behavior change.
+
+*(These are drafted from the visible commit history and planning.md's
+documented process — double-check the specifics against your own memory
+of the sessions before submitting, and swap in any different instances
+that better reflect what actually happened.)*
 
 ## Project Structure
 
