@@ -2,7 +2,7 @@
 
 Asks the model to judge whether text reads as human- or AI-written and
 return a structured AI-likelihood score plus a short rationale. See
-planning.md section 2 for what this captures and its blind spots.
+planning.md section 1 for what this captures and its blind spots.
 """
 
 import json

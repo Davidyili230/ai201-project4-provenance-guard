@@ -11,7 +11,7 @@ STYLOMETRIC_WEIGHT = 0.4
 # Asymmetric thresholds: it takes more evidence to accuse a creator of
 # using AI than it does to clear them, because a false "likely_ai" verdict
 # does more reputational harm to a human creator than a missed AI
-# detection does. See planning.md section 4 for the full rationale.
+# detection does. See planning.md section 2 for the full rationale.
 LIKELY_AI_THRESHOLD = 0.75
 LIKELY_HUMAN_THRESHOLD = 0.35
 

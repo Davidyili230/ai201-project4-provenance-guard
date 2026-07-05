@@ -60,7 +60,7 @@ Example `/submit` response:
 ## Detection Signals
 
 Two independent signals feed the pipeline (full rationale in
-[planning.md §2](planning.md)):
+[planning.md §1](planning.md)):
 
 1. **LLM-based classification (Groq, `llama-3.3-70b-versatile`)** — asks
    the model to judge semantic/stylistic coherence: does this read like

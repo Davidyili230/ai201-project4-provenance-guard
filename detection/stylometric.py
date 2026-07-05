@@ -1,7 +1,7 @@
 """Signal 2: stylometric heuristics.
 
 Pure-Python statistical features computed directly from the text's shape,
-independent of what it means. See planning.md section 2 for the rationale
+independent of what it means. See planning.md section 1 for the rationale
 and documented blind spots of each feature.
 """
 
